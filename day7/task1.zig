@@ -1,91 +1,64 @@
 const std = @import("std");
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-const gpaAllocator = gpa.allocator();
 
 const TokenType = enum {
   constant,
-  gate,
   wire,
-  other,
+  gate,
+  arrow,
+
+  fn name(self: @This()) []const u8 {
+    return switch(self) {
+      .constant => "constant",
+      .wire => "wire",
+      .gate => "gate",
+      .arrow => "arrow",
+    };
+  }
 };
 
 const Token = struct {
+  alloc: std.mem.Allocator,
   kind: TokenType,
   span: []const u8,
 
   fn init(allocator: std.mem.Allocator, kind: TokenType, span: []const u8) !@This() {
     return @This() {
+      .alloc = allocator,
       .kind = kind,
       .span = try allocator.dupe(u8, span),
     };
   }
 
-  fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    allocator.free(self.span);
+  fn deinit(self: *const @This()) void {
+    self.alloc.free(self.span);
+  }
+
+  fn dump(self: *const @This()) void {
+    std.debug.print("{s} \"{s}\"\n", .{ self.kind.name(), self.span });
   }
 };
 
-fn tokenizeInto(allocator: std.mem.Allocator, dest: *std.ArrayList(Token), source: []const u8) !void {
-  var it = std.mem.splitScalar(u8, source, ' ');
-  while (it.next()) |span| {
-    const token = try switch (span[0]) {
-      '0' ... '9' => Token.init(allocator, TokenType.constant, span),
-      'a' ... 'z' => Token.init(allocator, TokenType.wire, span),
-      'A' ... 'Z' => Token.init(allocator, TokenType.gate, span),
-      else => Token.init(allocator, TokenType.other, span),
-    };
-    try dest.append(token);
-  }
-}
+const TokenIterator = struct {
+  alloc: std.mem.Allocator,
+  chunkIterator: std.mem.SplitIterator(u8, std.mem.DelimiterType.scalar),
 
-fn cleanTokens(allocator: std.mem.Allocator, dest: *std.ArrayList(Token)) void {
-  for (dest.items) |*token| {
-    token.deinit(allocator);
-  }
-  dest.clearAndFree();
-}
-
-const LogicGate = struct {
-  left: []const u8,
-  right: []const u8,
-
-  fn init(allocator: std.mem.Allocator, left: []const u8, right: []const u8) !@This() {
-    return @This() {
-      .left = try allocator.dupe(u8, left),
-      .right = try allocator.dupe(u8, right),
+  fn init(allocator: std.mem.Allocator, source: []const u8) @This() {
+    const it = std.mem.splitScalar(u8, source, ' ');
+    return @This() { 
+      .alloc = allocator,
+      .chunkIterator = it,
     };
   }
 
-  fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    allocator.free(self.left);
-    allocator.free(self.right);
-  }
-};
-
-const ShiftGate = struct {
-  wire: []const u8,
-  shift: u32,
-
-  fn init(allocator: std.mem.Allocator, wire: []const u8, shift: u32) !@This() {
-    return @This() {
-      .wire = try allocator.dupe(wire),
-      .shift = shift,
+  fn next(self: *@This()) !?Token {
+    const chunk = self.chunkIterator.next() orelse return null;
+    return try switch (chunk[0]) {
+      'a' ... 'z' => Token.init(self.alloc, TokenType.wire, chunk),
+      'A' ... 'Z' => Token.init(self.alloc, TokenType.gate, chunk),
+      '0' ... '9' => Token.init(self.alloc, TokenType.constant, chunk),
+      else => Token.init(self.alloc, TokenType.arrow, chunk),
     };
   }
-
-  fn deinit(self: *@This(), allocator: std.mem.Allocator) void {
-    allocator.free(self.wire);
-  }
-};
-
-const WireInput = union(enum) {
-  constant: u16,
-  andGate: LogicGate,
-  orGate: LogicGate,
-  lshiftGate: ShiftGate,
-  rshiftGate: ShiftGate,
-  notGate: []const u8,
-  // TODO: fn parse() and fn deinit()
 };
 
 pub fn main() !void {
@@ -95,13 +68,17 @@ pub fn main() !void {
   var buffered = std.io.bufferedReader(file.reader());
   var reader = buffered.reader();
 
-  var tokens = std.ArrayList(Token).init(gpaAllocator);
-  defer tokens.deinit();
+  var buffer: [256]u8 = undefined;
+  var fba = std.heap.FixedBufferAllocator.init(&buffer);
+  const allocator = fba.allocator();
 
   var lineBuffer: [128]u8 = undefined;
   while (try reader.readUntilDelimiterOrEof(&lineBuffer, '\n')) |line| {
-    defer cleanTokens(gpaAllocator, &tokens);
-    try tokenizeInto(gpaAllocator, &tokens, line);
-    // TODO: process tokens
+    var it = TokenIterator.init(allocator, line);
+    while (try it.next()) |token| {
+      defer token.deinit();
+      token.dump();
+    }
   }
+
 }
