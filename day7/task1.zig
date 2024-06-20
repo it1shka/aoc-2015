@@ -61,6 +61,36 @@ const TokenIterator = struct {
   }
 };
 
+const Circuit = struct {
+  alloc: std.mem.Allocator,
+  breadboard: std.StringHashMap(u16),
+
+  fn init(allocator: std.mem.Allocator) @This() {
+    return @This() {
+      .alloc = allocator,
+      .breadboard = std.StringHashMap(u16).init(allocator),
+    };
+  }
+
+  fn deinit(self: *@This()) void {
+    var keys = self.breadboard.keyIterator();
+    while (keys.next()) |key| {
+      self.alloc.free(key.*);
+    }
+    self.breadboard.deinit();
+  }
+
+  fn acceptInstruction(self: *@This(), instruction: []const u8) void {
+    // TODO:
+    _ = self;
+    _ = instruction;
+  }
+
+  fn getWire(self: *const @This(), wire: []const u8) ?u16 {
+    return self.breadboard.get(wire);
+  }
+};
+
 pub fn main() !void {
   var file = try std.fs.cwd().openFile("input.txt", .{});
   defer file.close();
@@ -68,17 +98,22 @@ pub fn main() !void {
   var buffered = std.io.bufferedReader(file.reader());
   var reader = buffered.reader();
 
-  var buffer: [256]u8 = undefined;
+  var buffer: [100 * 1024]u8 = undefined;
   var fba = std.heap.FixedBufferAllocator.init(&buffer);
   const allocator = fba.allocator();
 
+  var circuit = Circuit.init(allocator);
+  defer circuit.deinit();
+
   var lineBuffer: [128]u8 = undefined;
   while (try reader.readUntilDelimiterOrEof(&lineBuffer, '\n')) |line| {
-    var it = TokenIterator.init(allocator, line);
-    while (try it.next()) |token| {
-      defer token.deinit();
-      token.dump();
-    }
+    circuit.acceptInstruction(line);
   }
 
+  const wireA = circuit.getWire("a");
+  if (wireA) |value| {
+    std.debug.print("Wire A: {}", .{value});
+  } else {
+    std.debug.print("Wire A doesn't have any assigned value", .{});
+  }
 }
