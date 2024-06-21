@@ -61,6 +61,37 @@ const TokenIterator = struct {
   }
 };
 
+const GateType = enum {
+  AND,
+  OR,
+  LSHIFT,
+  RSHIFT,
+
+  fn fromString(source: []const u8) !@This() {
+    const mapping = comptime [_]struct{ kind: GateType, span: []const u8 } {
+      .{ .kind = .AND, .span = "AND" },
+      .{ .kind = .OR,  .span = "OR"  },
+      .{ .kind = .LSHIFT, .span = "LSHIFT" },
+      .{ .kind = .RSHIFT, .span = "RSHIFT" },
+    };
+    inline for (mapping) |elem| {
+      if (std.mem.eql(u8, source, elem.span)) {
+        return elem.kind;
+      }
+    }
+    return error.IllegalLiteral;
+  }
+
+  fn executeOn(self: @This(), left: u16, right: u16) u16 {
+    return switch(self) {
+      .AND => left & right,
+      .OR => left | right,
+      .LSHIFT => left << @truncate(right),
+      .RSHIFT => left >> @truncate(right),
+    };
+  }
+};
+
 const Circuit = struct {
   alloc: std.mem.Allocator,
   breadboard: std.StringHashMap(u16),
@@ -80,10 +111,66 @@ const Circuit = struct {
     self.breadboard.deinit();
   }
 
-  fn acceptInstruction(self: *@This(), instruction: []const u8) void {
-    // TODO:
-    _ = self;
-    _ = instruction;
+  fn acceptInstruction(self: *@This(), instruction: []const u8) !void {
+    var it = TokenIterator.init(self.alloc, instruction);
+    var token: Token = undefined;
+    var value: u16 = undefined;
+
+    token = try it.next() orelse return error.EmptyInstruction;
+    if (std.mem.eql(u8, token.span, "NOT")) {
+      token.deinit();
+      token = try it.next() orelse return error.ExpectedOperand;
+      defer token.deinit();
+      value = ~try self.operand(token);
+    }
+
+    {
+      defer token.deinit();
+      value = try self.operand(token);
+    }
+
+    token = try it.next() orelse return error.ExpectedGateOrArrow;
+    if (token.kind == TokenType.gate) {
+      var gate: GateType = undefined;
+      {
+        defer token.deinit();
+        gate = try GateType.fromString(token.span);
+      }
+      token = try it.next() orelse return error.ExpectedRightOperand;
+      var rightValue: u16 = undefined;
+      {
+        defer token.deinit();
+        rightValue = try self.operand(token);
+      }
+      value = gate.executeOn(value, rightValue);
+      token = try it.next() orelse return error.ExpectedArrow;
+    }
+
+    {
+      defer token.deinit();
+      if (!std.mem.eql(u8, token.span, "->")) {
+        return error.ExpectedArrow;
+      }
+    }
+
+    token = try it.next() orelse return error.ExpectedOutputWire;
+    {
+      errdefer token.deinit();
+      if (token.kind != TokenType.wire) {
+        return error.ExpectedOutputWire;
+      }
+    }
+
+    defer token.deinit();
+    try self.breadboard.put(token.span, value);
+  }
+
+  fn operand(self: *const @This(), token: Token) !u16 {
+    return try switch(token.kind) {
+      .constant => std.fmt.parseUnsigned(u16, token.span, 10),
+      .wire => self.breadboard.get(token.span) orelse error.WireNotFound,
+      else => error.IllegalOperand,
+    };
   }
 
   fn getWire(self: *const @This(), wire: []const u8) ?u16 {
@@ -107,7 +194,7 @@ pub fn main() !void {
 
   var lineBuffer: [128]u8 = undefined;
   while (try reader.readUntilDelimiterOrEof(&lineBuffer, '\n')) |line| {
-    circuit.acceptInstruction(line);
+    try circuit.acceptInstruction(line);
   }
 
   const wireA = circuit.getWire("a");
