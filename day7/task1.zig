@@ -12,18 +12,16 @@ const Dependency = union(enum) {
     }
   };
 
-  atomic: Atomic,
-
-  unaryGate: struct {
+  const UnaryGate = struct {
     kind: []const u8,
     input: Atomic,
     fn deinit(self: @This(), allocator: std.mem.Allocator) void {
       allocator.free(self.kind);
       self.input.deinit(allocator);
     }
-  },
+  };
 
-  binaryGate: struct {
+  const BinaryGate = struct {
     kind: []const u8,
     leftInput: Atomic,
     rightInput: Atomic,
@@ -32,7 +30,11 @@ const Dependency = union(enum) {
       self.leftInput.deinit(allocator);
       self.rightInput.deinit(allocator);
     }
-  },
+  };
+
+  atomic: Atomic,
+  unaryGate: UnaryGate,
+  binaryGate: BinaryGate,
 
   fn deinit(self: @This(), allocator: std.mem.Allocator) void {
     switch (self) {
@@ -64,8 +66,8 @@ const InstructionParser = struct {
   }
 
   fn initTokens(self: *@This()) !void {
-    for (self.stream.next()) |token| {
-      const copy = try self.allocator.dupe(token);
+    while (self.stream.next()) |token| {
+      const copy = try self.allocator.dupe(u8, token);
       try self.tokens.append(copy);
     }
   }
@@ -103,19 +105,42 @@ const InstructionParser = struct {
     const target = self.tokens.items[2];
     return ParseResult {
       .wire = try self.allocator.dupe(u8, target),
-      .dependency = dependency,
+      .dependency = Dependency {
+        .atomic = dependency,
+      },
     };
   }
 
   fn parseUnaryGate(self: *@This()) !ParseResult {
     const kind = self.tokens.items[0];
-    const input = self.parseAtomicAt(1);
+    const input = try self.parseAtomicAt(1);
     const target = self.tokens.items[3];
-    // TODO: 
+    return ParseResult {
+      .wire = try self.allocator.dupe(u8, target),
+      .dependency = Dependency {
+        .unaryGate = Dependency.UnaryGate {
+          .kind = try self.allocator.dupe(u8, kind),
+          .input = input,
+        },
+      },
+    };
   }
 
   fn parseBinaryGate(self: *@This()) !ParseResult {
-    // TODO: 
+    const kind = self.tokens.items[1];
+    const leftInput = try self.parseAtomicAt(0);
+    const rightInput = try self.parseAtomicAt(2);
+    const target = self.tokens.items[4];
+    return ParseResult {
+      .wire = try self.allocator.dupe(u8, target),
+      .dependency = Dependency { 
+        .binaryGate = Dependency.BinaryGate {
+          .kind = try self.allocator.dupe(u8, kind),
+          .leftInput = leftInput,
+          .rightInput = rightInput,
+        },
+      },
+    };
   }
 };
 
@@ -138,25 +163,31 @@ const Circuit = struct {
   }
 
   fn deinit(self: *@This()) void {
-    for (self.dependencies.keyIterator()) |key| {
-      if (self.dependencies.get(key)) |dependency| {
-        dependency.deinit(self.allocator);
-      }
-      self.allocator.free(key);
+    var iterator = self.dependencies.iterator();
+    while (iterator.next()) |entry| {
+      entry.value_ptr.deinit(self.allocator);
+      self.allocator.free(entry.key_ptr.*);
     }
     self.dependencies.deinit();
   }
 };
 
-pub fn main() !void {
+fn compileCircuit(circuit: *Circuit) !void {
   const file = try std.fs.cwd().openFile("input.txt", .{});
   defer file.close();
-
   var buffered = std.io.bufferedReader(file.reader());
   const reader = buffered.reader();
-
   var buffer: [64]u8 = undefined;
   while (try reader.readUntilDelimiterOrEof(&buffer, '\n')) |line| {
-    std.debug.print("{s}\n", .{line});
+    try circuit.addInstruction(line);
   }
+}
+
+pub fn main() !void {
+  var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+  const allocator = gpa.allocator();
+
+  var circuit = Circuit.init(allocator);
+  defer circuit.deinit();
+  try compileCircuit(&circuit);
 }
