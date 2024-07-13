@@ -187,40 +187,63 @@ fn compileCircuit(circuit: *Circuit) !void {
 }
 
 const Engine = struct {
-  fn eval(circuit: *Circuit, dep: Dependency) !u16 {
-    return switch (dep) {
-      .atomic => |atomic| evalAtomic(circuit, atomic),
-      .unaryGate => |gate| evalUnaryGate(circuit, gate),
-      .binaryGate => |gate| evalBinaryGate(circuit, gate),
+  circuit: *Circuit,
+  cache: std.StringHashMap(u16),
+
+  fn init(allocator: std.mem.Allocator, circuit: *Circuit) @This() {
+    return @This() {
+      .circuit = circuit,
+      .cache = std.StringHashMap(u16).init(allocator),
     };
   }
 
-  fn evalWire(circuit: *Circuit, wire: []const u8) !u16 {
-    const dep = circuit.dependencies.get(wire)
+  fn deinit(self: *@This()) void {
+    self.cache.deinit();
+  }
+
+  const EngineError = error {
+    WireNotFound,
+    UnknownUnaryGate, 
+    UnknownBinaryGate,
+  };
+
+  fn eval(self: *@This(), dep: Dependency) !u16 {
+    return switch (dep) {
+      .atomic => |atomic| self.evalAtomic(atomic),
+      .unaryGate => |gate| self.evalUnaryGate(gate),
+      .binaryGate => |gate| self.evalBinaryGate(gate),
+    };
+  }
+
+  fn evalWire(self: *@This(), wire: []const u8) !u16 {
+    if (self.cache.contains(wire)) {
+      return self.cache.get(wire) orelse unreachable;
+    }
+    const dep = self.circuit.dependencies.get(wire)
       orelse return error.WireNotFound;
-    const value = try eval(circuit, dep);
-    std.debug.print("{s} = {}\n", .{wire, value});
+    const value = try self.eval(dep);
+    try self.cache.put(wire, value);
     return value;
   }
 
-  fn evalAtomic(circuit: *Circuit, atomic: Dependency.Atomic) error{WireNotFound, UnknownUnaryGate, UnknownBinaryGate}!u16 {
+  fn evalAtomic(self: *@This(), atomic: Dependency.Atomic) (std.mem.Allocator.Error || EngineError)!u16 {
     return switch (atomic) {
       .signal => |value| value,
-      .wire => |wire| try evalWire(circuit, wire),
+      .wire => |wire| try self.evalWire(wire),
     };
   }
 
-  fn evalUnaryGate(circuit: *Circuit, gate: Dependency.UnaryGate) !u16 {
-    const value = try evalAtomic(circuit, gate.input);
+  fn evalUnaryGate(self: *@This(), gate: Dependency.UnaryGate) !u16 {
+    const value = try self.evalAtomic(gate.input);
     if (std.mem.eql(u8, gate.kind, "NOT")) {
       return ~value;
     }
     return error.UnknownUnaryGate;
   }
 
-  fn evalBinaryGate(circuit: *Circuit, gate: Dependency.BinaryGate) !u16 {
-    const leftValue = try evalAtomic(circuit, gate.leftInput);
-    const rightValue = try evalAtomic(circuit, gate.rightInput);
+  fn evalBinaryGate(self: *@This(), gate: Dependency.BinaryGate) !u16 {
+    const leftValue = try self.evalAtomic(gate.leftInput);
+    const rightValue = try self.evalAtomic(gate.rightInput);
     if (std.mem.eql(u8, gate.kind, "AND")) {
       return leftValue & rightValue;
     }
@@ -245,6 +268,8 @@ pub fn main() !void {
   defer circuit.deinit();
   try compileCircuit(&circuit);
 
-  const value = try Engine.evalWire(&circuit, "a");
+  var engine = Engine.init(allocator, &circuit);
+  defer engine.deinit();
+  const value = try engine.evalWire("a");
   _ = try std.io.getStdIn().writer().print("Answer: {}\n", .{value});
 }
