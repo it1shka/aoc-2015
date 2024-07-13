@@ -159,6 +159,9 @@ const Circuit = struct {
     var parser = InstructionParser.init(self.allocator, instruction);
     defer parser.deinit();
     const result = try parser.parse();
+    if (self.dependencies.contains(result.wire)) {
+      return error.AmbiguousInput;
+    }
     try self.dependencies.put(result.wire, result.dependency);
   }
 
@@ -183,6 +186,57 @@ fn compileCircuit(circuit: *Circuit) !void {
   }
 }
 
+const Engine = struct {
+  fn eval(circuit: *Circuit, dep: Dependency) !u16 {
+    return switch (dep) {
+      .atomic => |atomic| evalAtomic(circuit, atomic),
+      .unaryGate => |gate| evalUnaryGate(circuit, gate),
+      .binaryGate => |gate| evalBinaryGate(circuit, gate),
+    };
+  }
+
+  fn evalWire(circuit: *Circuit, wire: []const u8) !u16 {
+    const dep = circuit.dependencies.get(wire)
+      orelse return error.WireNotFound;
+    const value = try eval(circuit, dep);
+    std.debug.print("{s} = {}\n", .{wire, value});
+    return value;
+  }
+
+  fn evalAtomic(circuit: *Circuit, atomic: Dependency.Atomic) error{WireNotFound, UnknownUnaryGate, UnknownBinaryGate}!u16 {
+    return switch (atomic) {
+      .signal => |value| value,
+      .wire => |wire| try evalWire(circuit, wire),
+    };
+  }
+
+  fn evalUnaryGate(circuit: *Circuit, gate: Dependency.UnaryGate) !u16 {
+    const value = try evalAtomic(circuit, gate.input);
+    if (std.mem.eql(u8, gate.kind, "NOT")) {
+      return ~value;
+    }
+    return error.UnknownUnaryGate;
+  }
+
+  fn evalBinaryGate(circuit: *Circuit, gate: Dependency.BinaryGate) !u16 {
+    const leftValue = try evalAtomic(circuit, gate.leftInput);
+    const rightValue = try evalAtomic(circuit, gate.rightInput);
+    if (std.mem.eql(u8, gate.kind, "AND")) {
+      return leftValue & rightValue;
+    }
+    if (std.mem.eql(u8, gate.kind, "OR")) {
+      return leftValue | rightValue;
+    }
+    if (std.mem.eql(u8, gate.kind, "LSHIFT")) {
+      return leftValue << @truncate(rightValue);
+    }
+    if (std.mem.eql(u8, gate.kind, "RSHIFT")) {
+      return leftValue >> @truncate(rightValue);
+    }
+    return error.UnknownBinaryGate;
+  }
+};
+
 pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
   const allocator = gpa.allocator();
@@ -190,4 +244,7 @@ pub fn main() !void {
   var circuit = Circuit.init(allocator);
   defer circuit.deinit();
   try compileCircuit(&circuit);
+
+  const value = try Engine.evalWire(&circuit, "a");
+  _ = try std.io.getStdIn().writer().print("Answer: {}\n", .{value});
 }
