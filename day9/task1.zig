@@ -67,6 +67,9 @@ fn readRoutes(allocator: Allocator, filename: []const u8) !std.ArrayList(Route) 
   return output;
 }
 
+fn getAllCities(allocator: Allocator, routes: []const Route) std.ArrayList([]const u8) {
+}
+
 pub fn main() !void {
   var gpa = std.heap.GeneralPurposeAllocator(.{}){};
   const allocator = gpa.allocator();
