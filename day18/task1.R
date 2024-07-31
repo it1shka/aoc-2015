@@ -16,19 +16,6 @@ get_input <- function() {
     matrix(nrow = 100, ncol = 100)
 }
 
-corner_lights <- function(field) {
-  positions <- list(
-    top_left = c(1, 1),
-    top_right = c(1, ncol(field)),
-    bottom_left = c(nrow(field), 1),
-    bottom_right = c(nrow(field), ncol(field))
-  )
-  for (pos in positions) {
-    field[pos] <- TRUE
-  }
-  field
-}
-
 next_step <- function(field) {
   output <- matrix(nrow = nrow(field), ncol = ncol(field))
   for (i in field |> nrow() |> seq_len()) {
@@ -48,11 +35,6 @@ next_step <- function(field) {
 }
 
 get_input() %>%
-  # corner_lights()  %>%
-  reduce(1:100, \(acc, elem) {
-    corner_lights(acc) |>
-      next_step() |>
-      corner_lights()
-  }, .init = .) |>
+  reduce(1:100, \(acc, elem) next_step(acc), .init = .) |>
   as.numeric() |>
   sum()
