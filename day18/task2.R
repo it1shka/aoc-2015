@@ -1,4 +1,5 @@
 library(tidyverse)
+library(zeallot)
 
 get_input <- function() {
   read_file("input.txt") |>
@@ -24,7 +25,8 @@ corner_lights <- function(field) {
     bottom_right = c(nrow(field), ncol(field))
   )
   for (pos in positions) {
-    field[pos] <- TRUE
+    c(row, col) %<-% pos
+    field[row, col] <- TRUE
   }
   field
 }
@@ -48,7 +50,7 @@ next_step <- function(field) {
 }
 
 get_input() %>%
-  # corner_lights()  %>%
+  corner_lights() %>%
   reduce(1:100, \(acc, elem) {
     corner_lights(acc) |>
       next_step() |>
