@@ -155,7 +155,8 @@ pub fn main() !void {
   defer instructions.deinit();
 
   var vm = VMInstance {
-    .registers = [_]u64{0} ** 2,
+    // .registers = [_]u64{0} ** 2, // for task 1
+    .registers = [_]u64{1, 0},      // for task 2
     .pointer = 0,
     .instructions = instructions.items,
   };
