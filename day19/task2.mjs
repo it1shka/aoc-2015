@@ -1,5 +1,24 @@
 import fs from 'node:fs/promises'
 
+const cached = fn => {
+  const cache = {}
+  return (...args) => {
+    const key = JSON.stringify(args)
+    if (key in cache) return cache[key]
+    return (cache[key] = fn(...args))
+  }
+}
+
+Array.prototype.sortBy = function(evaluate) {
+  return this
+    .map(value => Object.freeze({
+      value,
+      score: evaluate(value),
+    }))
+    .sort(({ score: score1 }, { score: score2 }) => score1 - score2)
+    .map(({ value }) => value)
+}
+
 async function getInput() {
   const contents = await fs.readFile('input.txt', {
     encoding: 'utf-8',
@@ -11,7 +30,37 @@ async function getInput() {
   return Object.freeze({ rules, expression })
 }
 
-function nextSteps(rules, current) {
+function algorithm({ entry, desired, next, heuristics, logging }) {
+  const visited = new Set([entry])
+  let queue = [{ current: entry, steps: 0 }]
+  while (queue.length > 0) {
+    const { current, steps } = queue.shift()
+    if (logging) {
+      const metric = heuristics ? heuristics(current) : 'unknown'
+      console.log(`${steps} (${metric}): ${current}`)
+    }
+    if (current === desired) {
+      return steps
+    }
+    const forward = next(current)
+      .filter(e => !visited.has(e))
+    for (const each of forward) {
+      visited.add(each)
+      queue.push(Object.freeze({
+        current: each,
+        steps: steps + 1,
+      }))
+    }
+    if (heuristics) {
+      queue = queue.sortBy(({ current }) => {
+        return heuristics(current)
+      })
+    }
+  }
+  return null
+}
+
+const next = rules => current => {
   const output = []
   for (const [original, replacement] of rules) {
     let index, tail = current
@@ -29,43 +78,33 @@ function nextSteps(rules, current) {
   return output
 }
 
-// I have to add heuristics here,
-// otherwise it's too long
-function bfs(rules, start, desired, {
-  dfs = false,
-  logging = false,
-}) {
-  const visited = new Set([start])
-  const queue = [{ current: start, steps: 0 }]
-  while (queue.length > 0) {
-    const { current, steps } = dfs
-      ? queue.pop()
-      : queue.shift()
-    if (logging) {
-      console.log(`${steps}: ${current}`)
+const levenshteinDistance = s => t => {
+  if (!s.length) return t.length
+  if (!t.length) return s.length
+  const arr = []
+  for (let i = 0; i <= t.length; i++) {
+    arr[i] = [i]
+    for (let j = 1; j <= s.length; j++) {
+      arr[i][j] =
+        i === 0
+          ? j
+          : Math.min(
+              arr[i - 1][j] + 1,
+              arr[i][j - 1] + 1,
+              arr[i - 1][j - 1] + (s[j - 1] === t[i - 1] ? 0 : 1)
+            )
     }
-    if (current === desired) {
-      return steps
-    }
-    const forward = nextSteps(rules, current)
-      .filter(e => {
-        return !visited.has(e) && e.length <= desired.length
-      })
-    forward.forEach(e => visited.add(e))
-    queue.push(...forward.map(current => {
-      return Object.freeze({
-        current,
-        steps: steps + 1,
-      })
-    }))
   }
-  return null
+  return arr[t.length][s.length]
 }
 
 (async function main() {
   const { rules, expression } = await getInput()
-  const steps = bfs(rules, 'e', expression, {
-    dfs: true,
+  const steps = algorithm({
+    entry: 'e',
+    desired: expression,
+    next: cached(next(rules)),
+    heuristics: cached(levenshteinDistance(expression)),
     logging: true,
   })
   console.log(steps)
