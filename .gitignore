@@ -3,3 +3,4 @@ input.txt
 *.beam
 .RData
 .Rhistory
+exec
