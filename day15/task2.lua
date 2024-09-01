@@ -56,6 +56,9 @@ local function recipe_score(recipe, ingredients)
   end
   local score = 1
   for parameter, value in pairs(parameters) do
+    if parameter == "calories" and value ~= 500 then
+      return -1
+    end
     if parameter ~= "calories" then
       if value < 0 then
         return 0
