@@ -1,0 +1,24 @@
+const std = @import("std");
+
+const REQUIRED_PRESENTS = 33100000;
+const ELF_RANGE = 50;
+
+pub fn main() !void {
+  var presents = std.AutoHashMap(usize, usize).init(std.heap.c_allocator);
+  defer presents.deinit();
+
+  var elf = @as(usize, 1);
+  while (true) {
+    for (1..ELF_RANGE + 1) |nthHouse| {
+      const house = nthHouse * elf;
+      const prev = try presents.getOrPut(0);
+      const next = prev.value_ptr.* + elf * 11;
+      if (next >= REQUIRED_PRESENTS) {
+        std.debug.print("Result: {}\n", .{next});
+        return;
+      }
+      try presents.put(house, next);
+    }
+    elf += 1;
+  }
+}
