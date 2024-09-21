@@ -19,6 +19,17 @@ fn bitmaskSumOf(values: []const u16, bitmask: u32) u16 {
   return output;
 }
 
+fn bitmaskProdOf(values: []const u16, bitmask: u32) u64 {
+  var output = @as(u64, 1);
+  for (0..@min(@sizeOf(u32) * 8, values.len)) |i| {
+    const currentBit = (bitmask >> @intCast(i)) & 1;
+    if (currentBit == 1) {
+      output *= @intCast(values[i]);
+    }
+  }
+  return output;
+}
+
 fn bitmaskPowersetOf(allocator: std.mem.Allocator, size: usize) !std.ArrayList(u32) {
   var output = std.ArrayList(u32).init(allocator);
   errdefer output.deinit();
@@ -51,6 +62,19 @@ fn partitionsOf(allocator: std.mem.Allocator, values: []const u16, partitionSize
   return output;
 }
 
+fn bitmaskCheck(values: []const u32, bitmask: u32, count: usize) bool {
+  if (count <= 0) {
+    return true;
+  }
+  for (values, 0..) |value, i| {
+    if ((value & bitmask) == 0x0) {
+      const verdict = bitmaskCheck(values[i+1..], bitmask | value, count - 1);
+      if (verdict) return true;
+    }
+  }
+  return false;
+}
+
 pub fn main() !void {
   const weights = [_]u16 {
     1, 3, 5, 11, 13, 17,
@@ -64,6 +88,20 @@ pub fn main() !void {
 
   const groups = try partitionsOf(std.heap.c_allocator, &weights, partitions);
   defer groups.deinit();
+  std.debug.print("Groups are generated...\n", .{});
 
-  std.debug.print("Groups: {}\n", .{groups.items.len});
+  var length = @as(usize, std.math.maxInt(usize));
+  var entanglement = @as(u64, std.math.maxInt(u64));
+
+  for (groups.items) |bitmask| {
+    if (bitmaskCheck(groups.items, bitmask, 2)) {
+      if (@popCount(bitmask) <= length) {
+        length = @popCount(bitmask);
+        entanglement = @min(entanglement, bitmaskProdOf(&weights, bitmask));
+        std.debug.print("Entanglement: {}\n", .{entanglement});
+      }
+    }
+  }
+
+  std.debug.print("Result: {}\n", .{entanglement});
 }
