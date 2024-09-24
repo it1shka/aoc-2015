@@ -1,6 +1,8 @@
 -module(task1).
 -export([solve/0]).
 
+%% Definitions:
+
 -define(ENEMY_DAMAGE, 9).
 -define(EFFECTS, [
   missile,
@@ -18,9 +20,12 @@
   effects :: [{ atom(), integer() }]
 }).
 
+%% Type definitions:
+
 -spec accumulator(MinSpent :: integer()) -> none().
 -spec effect_cost(Effect :: atom()) -> integer().
--spec available_effects(Mana :: integer()) -> [atom()].
+-spec effect_duration(Effect :: atom()) -> integer().
+-spec available_effects(Mana :: integer(), ExistingEffects :: [atom()]) -> [atom()].
 -spec 
   battle (
     AccPID :: pid(), 
@@ -28,6 +33,8 @@
     Spent :: integer()
   ) -> none().
 -spec solve() -> none().
+
+%% Functions:
 
 accumulator(MinSpent) ->
   receive 
@@ -41,7 +48,7 @@ accumulator(MinSpent) ->
       end)
   after 
     ?TIMEOUT ->
-      io:write("Accumulator timeouted\n")
+      io:format("Accumulator timeouted, min value is ~p\n", [MinSpent])
   end.
 
 effect_cost(Effect) ->
@@ -53,12 +60,26 @@ effect_cost(Effect) ->
     recharge -> 229;
     IllegalEffect ->
       EffectName = atom_to_list(IllegalEffect),
-      io:format("Unknown effect: ~s\n", [EffectName])
+      io:format("Unknown effect: ~s\n", [EffectName]),
+      infinity
   end.
 
-available_effects(Mana) ->
+effect_duration(Effect) ->
+  case Effect of
+    shield -> 6;
+    poison -> 6;
+    recharge -> 5;
+    IllegalEffect ->
+      EffectName = atom_to_list(IllegalEffect),
+      io:format("Unknown effect: ~s\n", [EffectName]),
+      infinity
+  end.
+
+available_effects(Mana, ExistingEffects) ->
   lists:filter(fun (Effect) ->
-    effect_cost(Effect) =< Mana
+    Cheap = effect_cost(Effect) =< Mana,
+    Enabled = lists:member(Effect, ExistingEffects),
+    Cheap and not Enabled
   end, ?EFFECTS).
 
 battle(_, State, _)
@@ -68,7 +89,83 @@ battle(AccPID, State, Spent)
   when State#battle_state.enemy_hp =< 0 ->
   AccPID ! Spent;
 battle(AccPID, State, Spent) ->
-  todo.
+  EffectAtoms = lists:map(fun({ Atom, _ }) -> 
+    Atom 
+  end, State#battle_state.effects),
+  AffectedState = lists:foldl(fun(Effect, PrevState) ->
+    case Effect of
+      poison -> PrevState#battle_state{
+        enemy_hp = PrevState#battle_state.player_hp - 6
+      };
+      recharge -> PrevState#battle_state{
+        mana = PrevState#battle_state.mana + 101
+      };
+      _ -> PrevState
+    end
+  end, State, EffectAtoms),
+  PastState = AffectedState#battle_state{
+    effects = lists:filtermap(fun({Atom, Count}) ->
+      NewCount = Count - 1,
+      if 
+        NewCount =< 0 ->
+          false;
+        true ->
+          {true, {Atom, NewCount}}
+      end
+    end, AffectedState#battle_state.effects)
+  },
+  if
+    PastState#battle_state.enemy_hp =< 0 ->
+      AccPID ! Spent;
+    PastState#battle_state.turn =:= player ->
+      PastEffects = lists:map(fun({ Atom, _ }) ->
+        Atom
+      end, PastState#battle_state.effects),
+      AvailableEffects = available_effects(PastState#battle_state.mana, PastEffects),
+      lists:foreach(fun(Effect) ->
+        NextState = 
+          case Effect of
+            missile -> 
+              NextEnemyHP = PastState#battle_state.enemy_hp - 4,
+              PastState#battle_state{ enemy_hp = NextEnemyHP };
+            drain -> 
+              NextEnemyHP = PastState#battle_state.enemy_hp - 2,
+              NextPlayerHP = PastState#battle_state.player_hp + 2,
+              PastState#battle_state{ 
+                enemy_hp = NextEnemyHP, 
+                player_hp = NextPlayerHP 
+              };
+            LongEffect ->
+              NextEffects = lists:append(
+                PastState#battle_state.effects,
+                [{LongEffect, effect_duration(LongEffect)}]
+              ),
+              PastState#battle_state{ effects = NextEffects }
+          end,
+        spawn(fun() ->
+          battle(AccPID, NextState#battle_state{
+            turn = enemy
+          }, Spent + effect_cost(Effect))
+        end)
+      end, AvailableEffects);
+    true ->
+      NextPlayerHP = 
+        case lists:member(shield, EffectAtoms) of
+          true ->
+            Damage = max(1, ?ENEMY_DAMAGE - 7),
+            PastState#battle_state.player_hp - Damage;
+          _ ->
+            PastState#battle_state.player_hp - ?ENEMY_DAMAGE
+        end,
+      NextState = PastState#battle_state{
+        turn = player,
+        player_hp = NextPlayerHP
+      },
+      spawn(fun() ->
+        battle(AccPID, NextState, Spent)
+      end)
+  end,
+  finished.
 
 solve() ->
   AccPID = spawn(fun() ->
