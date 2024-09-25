@@ -95,11 +95,15 @@ func (bs BattleState) Next() []BattleState {
     bs.Mana += RechargeMana
     bs.Effects[Recharge]--
   }
+  shieldActive := false
+  if bs.Effects[Shield] > 0 {
+    shieldActive = true
+    bs.Effects[Shield]--
+  }
   if bs.Turn == Enemy {
     var damage int
-    if bs.Effects[Shield] > 0 {
+    if shieldActive {
       damage = max(1, bs.EnemyDamage - ShieldProtection)
-      bs.Effects[Shield]--
     } else {
       damage = bs.EnemyDamage
     }
@@ -125,6 +129,9 @@ func (bs BattleState) Next() []BattleState {
       state.EnemyHP -= DrainDamage
       state.PlayerHP += DrainHeal
     case Shield, Poison, Recharge:
+      if bs.Effects[effect] > 0 {
+        continue
+      }
       duration, err := effect.Duration()
       if err != nil {
         fmt.Println(err)
